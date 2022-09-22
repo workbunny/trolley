@@ -16,6 +16,9 @@ use WorkBunny\Storage\Driver;
 
 class Process
 {
+    /** @var string|null  */
+    protected static ?string $_main_file = null;
+
     /** @var Runtime 主Runtime */
     protected static Runtime $_main_runtime;
 
@@ -257,6 +260,7 @@ class Process
                 self::mainLoop()->delTimer(self::$_main_timer);
                 self::$_main_timer = null;
             }
+            self::_setProcessTittle("worker {$process->getName()} " . self::mainRuntime()->getId());
             //子Runtime onWorkerStart响应回调
             if($handler = $process->getHandler('WorkerStart')){
                 try {
@@ -359,7 +363,7 @@ class Process
      */
     public static function run(): void
     {
-        self::$_main_start_time = microtime(true);
+        self::_init();
 
         foreach (self::getProcessGroup() as $process){
             // fork
@@ -380,6 +384,25 @@ class Process
             // 开始loop
             self::mainLoop()->loop();
         }
+    }
+
+    protected static function _init(): void
+    {
+        self::$_main_start_time = microtime(true);
+        // Start file.
+        $backtrace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
+        self::$_main_file = end($backtrace)['file'] ?? 'unknown';
+        self::_setProcessTittle();
+
+    }
+
+    /**
+     * @param string $key
+     * @return void
+     */
+    protected static function _setProcessTittle(string $key = 'master'): void
+    {
+        cli_set_process_title(WORKBUNNY_NAME . ": $key (" . self::$_main_file . ')');
     }
 
     /**
