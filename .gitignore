@@ -16,3 +16,4 @@ vendor/
 composer.lock
 .idea
 *.db
+*.log
