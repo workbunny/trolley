@@ -7,6 +7,7 @@ use Closure;
 use InvalidArgumentException;
 use Monolog\Handler\StreamHandler;
 use Monolog\Logger;
+use RuntimeException;
 use Throwable;
 use WorkBunny\EventLoop\Drivers\LoopInterface;
 use WorkBunny\EventLoop\Drivers\NativeLoop;
@@ -43,40 +44,51 @@ class Process
     /** @var Process[] 进程分组 */
     protected static array $_process_group = [];
 
-    /** @var string 进程名称 */
+    /** @var string 分组名称 */
     protected string $_name;
 
-    /** @var int 进程数量 */
+    /** @var bool 重用 */
+    protected bool $_reuseport = true;
+
+    /** @var int 分组的process数量 */
     protected int $_count;
 
     /** @var array  */
-    protected array $_runtimeIdMap = [];
+    protected array $_address = [
+        'scheme' => '',
+        'host'   => '',
+        'port'   => 80
+    ];
 
-    /** @var string|null  */
-    protected ?string $_address = null;
+    /** @var resource|null */
+    protected $_context = null;
 
-    /** @var array */
-    protected array $_protocol =
-        [
-            'tcp', 'udp', 'socket'
-        ];
+    /** @var resource|null  */
+    protected $_socket = null;
+
+    /**
+     * @var array
+     * @see stream_get_transports()
+     */
+    protected array $_transport = [];
 
     /** @var Closure[]|null[]  */
     protected array $_events =
         [
-            'WorkerStart'  => null,
-            'WorkerReload' => null,
-            'WorkerStop'   => null,
+            'WorkerStart'  => null, /** @see Process::_childContext() */
+            'WorkerReload' => null,// function (Process $process){}
+            'WorkerStop'   => null, /** @see Process::stop() */
+            'Listener'     => null, /** @see Process::_socketAccept() */
         ];
 
     /**
      * @param string $name
      * @param int $count
      * @param array $config = [
+     *      'log_path' => '',
      *      'event_loop' => '',     @see Loop::create()
      *      'storage_config' => [], @see Driver::__construct()
      *      'runtime_config' => [], @see Runtime::__construct()
-     *      'log_path' => '',
      * ]
      * @throws InvalidArgumentException
      */
@@ -88,6 +100,7 @@ class Process
 
         $this->_name = $name;
         $this->_count = $count;
+        $this->_transport = stream_get_transports();
 
         self::$_process_group[$name] = $this;
         self::$_main_logger          = self::$_main_logger ?? new Logger(WORKBUNNY_NAME, [
@@ -117,6 +130,118 @@ class Process
     }
 
     /**
+     * @param string $address
+     * @param Closure|null $handler = function(Process $process, resource $socket, string $remote_address){}
+     * @param array $context
+     * @return void
+     */
+    public function listener(string $address, ?Closure $handler, array $context = []): void
+    {
+        if(!$this->_address = parse_url($address)){
+            throw new InvalidArgumentException("Invalid Address [$address]. ");
+        }
+        if(!in_array($this->_address['scheme'] ?? '', $this->_transport)){
+            throw new InvalidArgumentException("Invalid Transport [$address]. ");
+        }
+        $context['socket']['backlog'] = $context['socket']['backlog'] ?? WORKBUNNY_DEFAULT_BACKLOG;
+        $this->_context = stream_context_create($context);
+
+        if(!$this->isReuseport()){
+            $this->_socketCreate();
+        }
+
+        $this->on('Listener', $handler);
+    }
+
+    /**
+     * 套接字创建
+     * @return void
+     */
+    public function _socketCreate(): void
+    {
+        if(!is_resource($this->_socket)){
+            if ($this->isReuseport()) {
+                stream_context_set_option($this->_context, 'socket', 'so_reuseport', 1);
+            }
+            if(!$this->_socket = stream_socket_server(
+                $this->_address['scheme'] . '://' . $this->_address['host'] . ':' . $this->_address['port'],
+                $errorCode,
+                $errorMessage,
+                ($this->_address['scheme'] === WORKBUNNY_TRANSPORT_UDP or $this->_address['scheme'] === WORKBUNNY_TRANSPORT_UDG) ?
+                    \STREAM_SERVER_BIND :
+                    \STREAM_SERVER_BIND | \STREAM_SERVER_LISTEN,
+                $this->_context
+            )){
+                throw new RuntimeException($errorMessage);
+            }
+
+            if($this->_address['scheme'] === WORKBUNNY_TRANSPORT_TCP and extension_loaded('sockets')){
+                $socket = socket_import_stream($this->_socket);
+                socket_set_option($socket, SOL_SOCKET, SO_KEEPALIVE, 1);
+                socket_set_option($socket, SOL_TCP, TCP_NODELAY, 1);
+            }
+            stream_set_blocking($this->_socket, false);
+        }
+    }
+
+    /**
+     * 套接字接收
+     * @return void
+     */
+    public function _socketAccept(): void
+    {
+        if(
+            is_resource($this->_socket) and
+            ($handler = $this->getHandler('Listener'))
+        ){
+            self::mainLoop()->addReadStream($this->_socket, function($stream) use ($handler){
+
+                if(
+                    $this->_address['scheme'] === WORKBUNNY_TRANSPORT_UDP OR
+                    $this->_address['scheme'] === WORKBUNNY_TRANSPORT_UDG
+                ){
+                    $result = @stream_socket_recvfrom($stream, WORKBUNNY_MAX_UDP_PACKAGE_SIZE, 0, $remoteAddress);
+                    if (false === $result or empty($remoteAddress)) {
+                        return;
+                    }
+
+
+                }else{
+                    if(!$result = @stream_socket_accept($stream, 0, $remoteAddress)){
+                        return;
+                    }
+                }
+                try{
+                    /**
+                     * @var string $result UDP和UDG连接下为 recv-buffer
+                     * @var resource $result TCP和unix-socket下为 stream资源
+                     */
+                    $handler($this, $remoteAddress, $result);
+                }catch (Throwable $throwable){
+                    self::mainLogger()->warning("Listener Handler Threw Exception. ", [
+                        'RuntimeID' => $id,
+                        'RuntimePID' => $pid,
+                        'Trace' => $throwable->getTrace()
+                    ]);
+                }
+            });
+        }
+    }
+
+    /**
+     * 套接字停止接收
+     * @return void
+     */
+    public function _socketUnaccept(): void
+    {
+        if(is_resource($this->_socket)){
+            self::mainLoop()->delReadStream($this->_socket);
+            @fclose($this->_socket);
+            $this->_socket = null;
+        }
+    }
+
+    /**
      * 设置事件回调
      * @param string $event
      * @param Closure|null $handler
@@ -127,21 +252,6 @@ class Process
     {
         if(!array_key_exists($event, $this->_events)){
             throw new InvalidArgumentException("Invalid Event [$event]. ");
-        }
-        $this->_events[$event] = $handler;
-    }
-
-    /**
-     * 新增事件回调
-     * @param string $event
-     * @param Closure|null $handler
-     * @return void
-     * @throws InvalidArgumentException
-     */
-    public function register(string $event, ?Closure $handler = null): void
-    {
-        if(array_key_exists($event, $this->_events)){
-            throw new InvalidArgumentException("The Event already exists [$event]. ");
         }
         $this->_events[$event] = $handler;
     }
@@ -161,34 +271,6 @@ class Process
     }
 
     /**
-     * @param int $id
-     * @return void
-     */
-    public function addRuntimeId(int $id): void
-    {
-        $this->_runtimeIdMap[$id] = $id;
-    }
-
-    /**
-     * @param int $id
-     * @return void
-     */
-    public function delRuntimeId(int $id): void
-    {
-        if(isset($this->_runtimeIdMap[$id])){
-            unset($this->_runtimeIdMap[$id]);
-        }
-    }
-
-    /**
-     * @return array
-     */
-    public function getRuntimeIdMap(): array
-    {
-        return $this->_runtimeIdMap;
-    }
-
-    /**
      * @return string
      */
     public function getName(): string
@@ -202,6 +284,22 @@ class Process
     public function getCount(): int
     {
         return $this->_count;
+    }
+
+    /**
+     * @return bool
+     */
+    public function isReuseport(): bool
+    {
+        return $this->_reuseport;
+    }
+
+    /**
+     * @param bool $reuseport
+     */
+    public function setReuseport(bool $reuseport): void
+    {
+        $this->_reuseport = $reuseport;
     }
 
     /**
@@ -245,6 +343,73 @@ class Process
     }
 
     /**
+     * @return void
+     */
+    public static function run(): void
+    {
+        self::_init();
+
+        foreach (self::getProcessGroup() as $process){
+            // fork
+            for ($i = 0; $i < $process->getCount(); $i ++){
+                self::mainRuntime()->child();
+            }
+            // parentContext
+            if(!self::mainRuntime()->isChild()){
+                self::_setProcessTittle();
+                self::_parentContext($process)();
+            }
+            // childContext
+            if(self::mainRuntime()->isChild()){
+                self::_setProcessTittle("worker {$process->getName()} " . self::mainRuntime()->getId());
+                self::_childContext($process)();
+            }
+        }
+        // parent loop
+        if(!self::mainRuntime()->isChild()){
+            // 开始loop
+            self::mainLoop()->loop();
+        }
+    }
+
+    /**
+     * // todo 平滑关闭
+     * @param int $code
+     * @param string|null $log
+     * @return void
+     */
+    public static function stop(int $code = 0, ?string $log = null): void
+    {
+        self::mainLoop()->destroy();
+        self::mainRuntime()->exit($code, $log);
+    }
+
+    /**
+     * @return void
+     */
+    protected static function _init(): void
+    {
+        // only for cli.
+        if (PHP_SAPI !== 'cli') {
+            self::mainRuntime()->exit(0, 'Only run in PHP-cli. ');
+        }
+        // start time
+        self::$_main_start_time = microtime(true);
+        // start file.
+        $backtrace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
+        self::$_main_file = end($backtrace)['file'] ?? 'unknown';
+    }
+
+    /**
+     * @param string $key
+     * @return void
+     */
+    protected static function _setProcessTittle(string $key = 'master'): void
+    {
+        cli_set_process_title(WORKBUNNY_NAME . ": $key (" . self::$_main_file . ')');
+    }
+
+    /**
      * @param Process $process
      * @return Closure
      */
@@ -260,7 +425,6 @@ class Process
                 self::mainLoop()->delTimer(self::$_main_timer);
                 self::$_main_timer = null;
             }
-            self::_setProcessTittle("worker {$process->getName()} " . self::mainRuntime()->getId());
             //子Runtime onWorkerStart响应回调
             if($handler = $process->getHandler('WorkerStart')){
                 try {
@@ -273,7 +437,11 @@ class Process
                     ]);
                 }
             }
-            // todo 网络
+
+            if($process->isReuseport()){
+                $process->_socketCreate();
+            }
+            $process->_socketAccept();
 
             // 开始loop
             self::mainLoop()->loop();
@@ -316,8 +484,6 @@ class Process
                             // 移除子Runtime PID
                             unset($pidMap[$id]);
                             self::mainRuntime()->setPidMap($pidMap);
-                            // 移除processGroup id
-                            $process->delRuntimeId($id);
                             //子Runtime onWorkerStop响应回调
                             if($handler = $process->getHandler('WorkerStop')){
                                 try {
@@ -356,64 +522,6 @@ class Process
                     }
                 });
         };
-    }
-
-    /**
-     * @return void
-     */
-    public static function run(): void
-    {
-        self::_init();
-
-        foreach (self::getProcessGroup() as $process){
-            // fork
-            for ($i = 0; $i < $process->getCount(); $i ++){
-                $process->addRuntimeId(self::mainRuntime()->child());
-            }
-            // parentContext
-            if(!self::mainRuntime()->isChild()){
-                self::_parentContext($process)();
-            }
-            // childContext
-            if(self::mainRuntime()->isChild()){
-                self::_childContext($process)();
-            }
-        }
-        // parent loop
-        if(!self::mainRuntime()->isChild()){
-            // 开始loop
-            self::mainLoop()->loop();
-        }
-    }
-
-    protected static function _init(): void
-    {
-        self::$_main_start_time = microtime(true);
-        // Start file.
-        $backtrace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
-        self::$_main_file = end($backtrace)['file'] ?? 'unknown';
-        self::_setProcessTittle();
-
-    }
-
-    /**
-     * @param string $key
-     * @return void
-     */
-    protected static function _setProcessTittle(string $key = 'master'): void
-    {
-        cli_set_process_title(WORKBUNNY_NAME . ": $key (" . self::$_main_file . ')');
-    }
-
-    /**
-     * @param int $code
-     * @param string|null $log
-     * @return void
-     */
-    public static function stop(int $code = 0, ?string $log = null): void
-    {
-        self::mainLoop()->destroy();
-        self::mainRuntime()->exit($code, $log);
     }
 
 //    protected static function _initStorage()
