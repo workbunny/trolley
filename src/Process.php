@@ -48,7 +48,7 @@ class Process
     protected string $_name;
 
     /** @var bool 重用 */
-    protected bool $_reuseport = true;
+    protected bool $_reuseport;
 
     /** @var int 分组的process数量 */
     protected int $_count;
@@ -86,6 +86,7 @@ class Process
      * @param int $count
      * @param array $config = [
      *      'log_path' => '',
+     *      'reuseport' => true,
      *      'event_loop' => '',     @see Loop::create()
      *      'storage_config' => [], @see Driver::__construct()
      *      'runtime_config' => [], @see Runtime::__construct()
@@ -100,6 +101,7 @@ class Process
 
         $this->_name = $name;
         $this->_count = $count;
+        $this->_reuseport = $config['reuseport'] ?? true;
         $this->_transport = stream_get_transports();
 
         self::$_process_group[$name] = $this;
@@ -292,14 +294,6 @@ class Process
     public function isReuseport(): bool
     {
         return $this->_reuseport;
-    }
-
-    /**
-     * @param bool $reuseport
-     */
-    public function setReuseport(bool $reuseport): void
-    {
-        $this->_reuseport = $reuseport;
     }
 
     /**
