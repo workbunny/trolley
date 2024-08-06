@@ -3,3 +3,6 @@ composer.lock
 .idea
 *.db
 *.log
+start.php
+webman
+runtime/

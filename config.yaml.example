@@ -1,0 +1,59 @@
+# 根配置
+app:
+  name: 'trolley'
+  debug_mode: true
+  debug_process_count: 1
+  default_timezone: 'Asia/Shanghai'
+  default_listen_protocol: 'http'
+  default_listen_host: '[::]'
+  default_listen_port: 5454
+
+# 环境变量
+env:
+  # 进程标识 【test: 测试】【prod：生产】
+  process_key: "test"
+
+# MySQL数据库
+mysql:
+
+  master:
+    host: '127.0.0.1'
+    port: 3306
+    username: ''
+    password: ''
+
+  slave:
+    host: '127.0.0.1'
+    port: 3306
+    username: ''
+    password: ''
+
+# Redis配置
+redis:
+
+  master:
+    host: '127.0.0.1'
+    port: 6379
+    username: ''
+    password: ''
+
+  slave:
+    host: '127.0.0.1'
+    port: 6379
+    username: ''
+    password: ''
+
+# MongoDB数据库
+mongodb:
+
+  master:
+    host: '127.0.0.1'
+    port: 27017
+    username: ''
+    password: ''
+
+  slave:
+    host: '127.0.0.1'
+    port: 27017
+    username: ''
+    password: ''
