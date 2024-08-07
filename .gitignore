@@ -1,9 +1,9 @@
-vendor/
-composer.lock
+/vendor/
+/composer.lock
 .idea
 *.db
 *.log
-start.php
-webman
-runtime/
-config.yaml
+/start.php
+/webman
+/runtime/
+/config.yaml
