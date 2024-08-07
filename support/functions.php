@@ -11,7 +11,7 @@
  * @param bool $static
  * @return mixed|null
  */
-function yaml(?string $key = null, mixed $default = null, ?string $path = null, bool $static = false): mixed
+function yaml(?string $key = null, mixed $default = null, ?string $path = null, bool $static = true): mixed
 {
     if (!file_exists(($path = $path ?? base_path() . '/config.yaml'))) {
         return $default;

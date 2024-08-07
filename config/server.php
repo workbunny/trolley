@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 /**
  * This file is part of webman.
  *
@@ -13,19 +13,19 @@
  */
 
 return [
-    'listen'            => 'http://0.0.0.0:8787',
+    'listen'            => 'http://' . yaml('app.default_listen_host') . ':' . yaml('app.default_listen_port'),
     'transport'         => 'tcp',
     'context'           => [],
-    'name'              => 'trolley',
-    'count'             => cpu_count() * 4,
+    'name'              => yaml('app.name'),
+    'count'             => yaml('app.debug_mode', true) ? yaml('app.debug_process_count', 2) : cpu_count() * 4,
     'user'              => '',
     'group'             => '',
     'reusePort'         => false,
     'event_loop'        => '',
     'stop_timeout'      => 2,
-    'pid_file'          => runtime_path() . '/trolley.pid',
-    'status_file'       => runtime_path() . '/trolley.status',
-    'stdout_file'       => runtime_path() . '/logs/stdout.log',
-    'log_file'          => runtime_path() . '/logs/trolley.log',
+    'pid_file'          => runtime_path() . '/' . yaml('app.name') . '.pid',
+    'status_file'       => runtime_path() . '/' . yaml('app.name') . '.status',
+    'stdout_file'       => runtime_path() . '/logs/' . yaml('app.name') . '.log',
+    'log_file'          => runtime_path() . '/logs/' . yaml('app.name') . '.log',
     'max_package_size'  => 10 * 1024 * 1024
 ];

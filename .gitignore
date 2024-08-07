@@ -6,3 +6,4 @@ composer.lock
 start.php
 webman
 runtime/
+config.yaml

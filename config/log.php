@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 /**
  * This file is part of webman.
  *
@@ -18,9 +18,57 @@ return [
             [
                 'class' => Monolog\Handler\RotatingFileHandler::class,
                 'constructor' => [
-                    runtime_path() . '/logs/webman.log',
-                    7, //$maxFiles
-                    Monolog\Logger::DEBUG,
+                    runtime_path() . '/logs/' . yaml('app.name') . '.log',
+                    10, //$maxFiles
+                    Monolog\Level::Debug,
+                ],
+                'formatter' => [
+                    'class' => Monolog\Formatter\LineFormatter::class,
+                    'constructor' => [null, 'Y-m-d H:i:s', true],
+                ],
+            ]
+        ],
+    ],
+    'notice' => [
+        'handlers' => [
+            [
+                'class' => Monolog\Handler\RotatingFileHandler::class,
+                'constructor' => [
+                    runtime_path() . '/logs/notice/' . yaml('app.name') . '.log',
+                    10, //$maxFiles
+                    Monolog\Level::Notice,
+                ],
+                'formatter' => [
+                    'class' => Monolog\Formatter\LineFormatter::class,
+                    'constructor' => [null, 'Y-m-d H:i:s', true],
+                ],
+            ]
+        ],
+    ],
+    'warning' => [
+        'handlers' => [
+            [
+                'class' => Monolog\Handler\RotatingFileHandler::class,
+                'constructor' => [
+                    runtime_path() . '/logs/warning/' . yaml('app.name') . '.log',
+                    10, //$maxFiles
+                    Monolog\Level::Warning,
+                ],
+                'formatter' => [
+                    'class' => Monolog\Formatter\LineFormatter::class,
+                    'constructor' => [null, 'Y-m-d H:i:s', true],
+                ],
+            ]
+        ],
+    ],
+    'error' => [
+        'handlers' => [
+            [
+                'class' => Monolog\Handler\RotatingFileHandler::class,
+                'constructor' => [
+                    runtime_path() . '/logs/error/' . yaml('app.name') . '.log',
+                    10, //$maxFiles
+                    Monolog\Level::Error,
                 ],
                 'formatter' => [
                     'class' => Monolog\Formatter\LineFormatter::class,
